@@ -1,0 +1,15 @@
+[build]
+  command = "npm run build"
+  publish = "client/build"
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[dev]
+  # Tell netlify dev explicitly where your functions are for local development.
+  # Do NOT specify 'targetPort', 'command', or 'publish' here,
+  # as we want npm start to handle the frontend and the proxy to handle API calls.
+  functions = "netlify/functions"
