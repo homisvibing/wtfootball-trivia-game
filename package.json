@@ -1,6 +1,5 @@
-{
-  "dependencies": {
-    "dotenv": "^16.5.0",
-    "mongodb": "^6.17.0"
-  }
-}
+"scripts": {
+  "start": "netlify dev",
+  "build": "cd client && npm install && npm run build",
+  "test": "echo \"Error: no test specified\" && exit 1"
+},
