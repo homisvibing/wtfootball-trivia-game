@@ -1,7 +1,7 @@
 [build]
-  command = "ls -la /opt/build/repo && npm run build"
-  publish = "client/build" # Assuming this is correct
-  functions = "netlify/functions" # Assuming this is correct
+  command = "cat package.json && ls -la /opt/build/repo && npm run build"
+  publish = "client/build"
+  functions = "netlify/functions"
 
 [[redirects]]
   from = "/*"
