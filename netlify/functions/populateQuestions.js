@@ -37,8 +37,9 @@ exports.handler = async function(event, context) {
         }
         const competitionsData = await competitionsResponse.json();
 
-        const targetCompetitionId = 43; // FIFA World Cup
-        const targetSeasonId = 106; // 2022
+       // Trying Champions League 2003/2004 (competition_id: 16, season_id: 4)
+        const targetCompetitionId = 16; // UEFA Champions League
+        const targetSeasonId = 4; // 2003/2004
 
         const worldCup2022 = competitionsData.find(comp =>
             comp.competition_id === targetCompetitionId && comp.season_id === targetSeasonId
