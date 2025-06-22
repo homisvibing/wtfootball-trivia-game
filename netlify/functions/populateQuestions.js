@@ -1,4 +1,28 @@
-// --- STEP 1: Fetch competitions.json from GitHub ---
+// netlify/functions/populateQuestions.js
+const { MongoClient } = require('mongodb');
+require('dotenv').config(); // For local development
+
+const uri = process.env.MONGODB_URI;
+// const client = new MongoClient(uri); // <-- REMOVE or COMMENT OUT THIS GLOBAL DECLARATION of client
+
+
+exports.handler = async function(event, context) {
+    // Declare client INSIDE the handler, so connect() is always awaited within an async context
+    const client = new MongoClient(uri); // Declare client here
+
+    if (event.httpMethod !== 'POST') {
+        return {
+            statusCode: 405,
+            body: JSON.stringify({ message: 'Method Not Allowed. Please use POST.' })
+        };
+    }
+
+    try {
+        await client.connect(); // <-- AWAIT IS NOW CORRECTLY INSIDE THE ASYNC FUNCTION
+        const database = client.db("wtfootball-trivia-game"); // Replace with your database name if different
+        const collection = database.collection("football_data"); // This will be your new collection for raw StatsBomb data
+
+        // --- STEP 1: Fetch competitions.json from GitHub ---
         const competitionsUrl = "https://raw.githubusercontent.com/statsbomb/open-data/master/data/competitions.json";
         const competitionsResponse = await fetch(competitionsUrl);
 
@@ -32,7 +56,7 @@
         const matchesResponse = await fetch(matchesUrl);
 
         // Check if the response was successful before parsing JSON
-        if (!matchesResponse.ok) { // This is where the previous error likely happened
+        if (!matchesResponse.ok) {
             const errorText = await matchesResponse.text();
             console.error(`Error fetching matches: Status ${matchesResponse.status}, Body: ${errorText}`);
             return {
@@ -40,7 +64,7 @@
                 body: JSON.stringify({ message: `Failed to fetch matches data from GitHub: Status ${matchesResponse.status}`, error: errorText })
             };
         }
-        const matchesData = await matchesResponse.json(); // This is the original Line 50
+        const matchesData = await matchesResponse.json();
 
 
         const statusMessage = `Successfully fetched data for ${worldCup2022.competition_name} - ${worldCup2022.season_name}. Found ${matchesData.length} matches.`;
@@ -55,3 +79,14 @@
                 matchesCount: matchesData.length
             })
         };
+
+    } catch (error) {
+        console.error("Error populating data:", error);
+        return {
+            statusCode: 500,
+            body: JSON.stringify({ message: "Failed to populate data", error: error.message })
+        };
+    } finally {
+        await client.close(); // Make sure client.close() is also awaited
+    }
+};
