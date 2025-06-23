@@ -1,75 +1,58 @@
-require('dotenv').config();
-const { MongoClient, ServerApiVersion } = require('mongodb');
+// netlify/functions/getQuestions.js
+const { MongoClient } = require('mongodb');
+require('dotenv').config(); // For local development on your machine
 
 const uri = process.env.MONGODB_URI;
 
-console.log('Attempting to connect with URI:', uri ? uri.substring(0, uri.indexOf('@') + 1) + '***' : 'URI not found');
-
-const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  }
-});
-
-exports.handler = async (event, context) => {
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-  };
-
-  if (event.httpMethod === 'OPTIONS') {
-    return {
-      statusCode: 204,
-      headers,
-      body: '',
-    };
-  }
-
-  if (!uri) {
-    console.error('MONGODB_URI environment variable is not set.');
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ error: 'MongoDB URI is not configured.' }),
-    };
-  }
-
-  try {
-    await client.connect();
-    const db = client.db("wtfootball-trivia-game"); // Connect to your specific database
-
-    // --- NEW CODE START ---
-    const questionsCollection = db.collection("questions"); // Access the 'questions' collection
-    const questions = await questionsCollection.find({}).toArray(); // Fetch all documents (questions)
-
-    let message = '';
-    if (questions.length > 0) {
-      message = `Successfully connected to MongoDB and fetched ${questions.length} questions!`;
-    } else {
-      message = `Successfully connected to MongoDB, but no questions found in 'questions' collection.`;
+exports.handler = async function(event, context) {
+    // Ensure only GET requests are allowed for fetching questions (standard practice)
+    if (event.httpMethod !== 'GET') {
+        return {
+            statusCode: 405,
+            body: JSON.stringify({ message: 'Method Not Allowed. Please use GET.' })
+        };
     }
 
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({
-        message: message,
-        questions: questions // Send the fetched questions array
-      }),
-    };
-    // --- NEW CODE END ---
+    const client = new MongoClient(uri); // Client is now declared inside the handler
 
-  } catch (e) {
-    console.error('MongoDB Operation Error:', e); // Changed error message for clarity
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ error: 'Failed to fetch questions from database.', details: e.message }), // Added details for debugging
-    };
-  } finally {
-    await client.close();
-  }
+    try {
+        await client.connect();
+        const database = client.db("wtfootball-trivia-game"); // Replace with your database name if different
+        const matchesCollection = database.collection("matches_data");
+
+        // --- Fetch a few random matches to test ---
+        // In a real scenario, you'd add more complex logic to select
+        // specific data points and generate well-formed questions.
+        const sampleMatches = await matchesCollection.aggregate([
+            { $sample: { size: 3 } } // Get 3 random match documents
+        ]).toArray();
+
+        // For now, let's just return the raw match data to the frontend
+        // so we can confirm the function is working and fetching from the new collection.
+        if (sampleMatches.length === 0) {
+            return {
+                statusCode: 404,
+                body: JSON.stringify({ message: "No matches found in the database." })
+            };
+        }
+
+        return {
+            statusCode: 200,
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(sampleMatches) // Send the raw match data
+        };
+
+    } catch (error) {
+        console.error("Error fetching questions from database:", error);
+        return {
+            statusCode: 500,
+            body: JSON.stringify({ message: "Error connecting to backend or fetching questions: " + error.message })
+        };
+    } finally {
+        if (client) {
+            await client.close();
+        }
+    }
 };
