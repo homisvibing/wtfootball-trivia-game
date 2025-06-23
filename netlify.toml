@@ -10,6 +10,8 @@
 
 [dev]
   # Tell netlify dev explicitly where your functions are for local development.
-  # Do NOT specify 'targetPort', 'command', or 'publish' here,
-  # as we want npm start to handle the frontend and the proxy to handle API calls.
   functions = "netlify/functions"
+  # NEW: Specify the command to start your client (React's dev server)
+  command = "npm start --prefix client"
+  # NEW: Specify the port your client's dev server runs on (default for Create React App)
+  targetPort = 3000

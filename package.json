@@ -6,8 +6,10 @@
   "scripts": {
     "start": "netlify dev",
     "build": "cd client && npm run build",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "populate-db": "node populateDbLocal.js" 
   },
+  
   "keywords": [],
   "author": "",
   "license": "ISC",
