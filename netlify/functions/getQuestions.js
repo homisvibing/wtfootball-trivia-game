@@ -50,65 +50,99 @@ exports.handler = async function(event, context) {
             correctAnswer = "It was a draw";
         }
 
-        // --- Generate incorrect options (Simplified approach to avoid large queries) ---
-        const incorrectOptionsSet = new Set();
-        let optionsToFind = 2; // We need two incorrect options
+        // netlify/functions/getQuestions.js (inside exports.handler try block)
+        // ... (keep the initial part where you fetch 10 sample matches)
 
-        // Try to get incorrect team names from other sample matches (from the 10 fetched)
-        for (let i = 1; i < sampleMatches.length && incorrectOptionsSet.size < optionsToFind; i++) {
-            const match = sampleMatches[i];
-            // Add home team if it's not the correct answer and not already in options
-            if (match.home_team.home_team_name && match.home_team.home_team_name !== correctAnswer && !incorrectOptionsSet.has(match.home_team.home_team_name)) {
-                incorrectOptionsSet.add(match.home_team.home_team_name);
-            }
-            // Add away team if it's not the correct answer and not already in options
-            if (incorrectOptionsSet.size < optionsToFind && match.away_team.away_team_name && match.away_team.away_team_name !== correctAnswer && !incorrectOptionsSet.has(match.away_team.away_team_name)) {
-                incorrectOptionsSet.add(match.away_team.away_team_name);
-            }
+        // --- Generate incorrect options (Improved Relevance) ---
+        const incorrectOptions = new Set();
+        const optionsToFind = 2; // We need two incorrect options
+
+        // Fetch the competition details to get its name and ID
+        const competitionsCollection = database.collection("competitions_data");
+        const competition = await competitionsCollection.findOne(
+            { competition_id: questionMatch.competition.competition_id }
+        );
+
+        let allTeamsInCompetition = [];
+        if (competition && competition.teams) { // Assuming 'teams' array exists in competition document
+            allTeamsInCompetition = competition.teams.map(team => team.team_name);
+        } else {
+            // Fallback: If no teams array in competition, get from sample matches (less ideal)
+            sampleMatches.forEach(match => {
+                allTeamsInCompetition.push(match.home_team.home_team_name);
+                allTeamsInCompetition.push(match.away_team.away_team_name);
+            });
+            allTeamsInCompetition = [...new Set(allTeamsInCompetition)]; // Get unique names
         }
 
-        // If "It was a draw" is not the correct answer, add it as an option if needed
-        if (correctAnswer !== "It was a draw" && incorrectOptionsSet.size < optionsToFind) {
-            incorrectOptionsSet.add("It was a draw");
-        }
+        const usedOptions = new Set([correctAnswer, questionMatch.home_team.home_team_name, questionMatch.away_team.away_team_name]);
 
-        // Convert Set to Array
-        const finalIncorrectOptions = Array.from(incorrectOptionsSet);
+        // Filter out already used options and the question teams
+        const possibleIncorrectTeams = allTeamsInCompetition.filter(
+            team => !usedOptions.has(team)
+        );
 
-        // Ensure we have exactly 2 incorrect options. Fill with a fallback if needed.
-        while (finalIncorrectOptions.length < optionsToFind) {
-            finalIncorrectOptions.push("Random Team"); // Fallback for testing/unlikely scenarios
-        }
-
-        // Slice to ensure only 2 are taken if more were somehow generated
-        const slicedIncorrectOptions = finalIncorrectOptions.slice(0, optionsToFind);
-
-        // Combine all options and shuffle them
-        const allOptions = [correctAnswer, ...slicedIncorrectOptions].filter(Boolean); // Filter out any null/undefined
-
-        // Shuffle function (Fisher-Yates)
-        for (let i = allOptions.length - 1; i > 0; i--) {
+        // Shuffle possible incorrect teams for randomness
+        for (let i = possibleIncorrectTeams.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
-            [allOptions[i], allOptions[j]] = [allOptions[j], allOptions[i]];
+            [possibleIncorrectTeams[i], possibleIncorrectTeams[j]] = [possibleIncorrectTeams[j], possibleIncorrectTeams[i]];
         }
 
-        // --- Structure the final question object as your frontend likely expects ---
-        const triviaQuestion = {
-            id: questionMatch.match_id, // Use match ID as a unique ID for the question
-            question: questionText,
-            options: allOptions,
-            correctAnswer: correctAnswer
-        };
+        // Pick 2 distinct incorrect options from the shuffled list
+        for (let i = 0; i < optionsToFind && i < possibleIncorrectTeams.length; i++) {
+            incorrectOptions.add(possibleIncorrectTeams[i]);
+        }
 
-        return {
-            statusCode: 200,
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify([triviaQuestion]) // Send an array containing one question object
-        };
+        // Add "It was a draw" as an option if it's not the correct answer and we still need options
+        if (correctAnswer !== "It was a draw" && incorrectOptions.size < optionsToFind) {
+            incorrectOptions.add("It was a draw");
+        }
 
-    } catch (error) {
+        // Fallback for extremely rare cases where not enough unique teams are found
+        while (incorrectOptions.size < optionsToFind) {
+            incorrectOptions.add(`Random Team ${incorrectOptions.size + 1}`); // Use a placeholder
+        }
+
+        const finalIncorrectOptions = Array.from(incorrectOptions);
+
+    // Ensure "It was a draw" isn't duplicated if it was the correct answer.
+    if (correctAnswer === "It was a draw") {
+        const drawIndex = finalIncorrectOptions.indexOf("It was a draw");
+        if (drawIndex > -1) {
+            finalIncorrectOptions.splice(drawIndex, 1);
+        }
+    }
+
+    // --- COMBINE AND SHUFFLE OPTIONS HERE ---
+    // This block needs to be placed BEFORE the triviaQuestion object is created.
+    const allOptions = [correctAnswer, ...finalIncorrectOptions].filter(Boolean); // Filter out any null/undefined
+
+    // Shuffle function (Fisher-Yates)
+    for (let i = allOptions.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [allOptions[i], allOptions[j]] = [allOptions[j], allOptions[i]];
+    }
+    // --- END OF COMBINE AND SHUFFLE OPTIONS ---
+
+
+    // --- Structure the final question object as your frontend likely expects ---
+    const triviaQuestion = {
+        id: questionMatch.match_id, // Use match ID as a unique ID for the question
+        question: questionText,
+        options: allOptions, // Now 'allOptions' is defined!
+        correctAnswer: correctAnswer
+    };
+
+    return {
+        statusCode: 200,
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify([triviaQuestion]) // Send an array containing one question object
+    };
+
+} catch (error) {
+// ... (rest of the try-catch-finally block)
         console.error("Error fetching or formulating questions:", error);
         return {
             statusCode: 500,
