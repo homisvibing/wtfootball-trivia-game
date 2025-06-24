@@ -8,14 +8,15 @@ const uri = process.env.MONGODB_URI;
 function getQuestionDetails(match) {
     const competitionName = match.competition.competition_name;
     const seasonName = match.season.season_name;
-    const countryName = match.competition.country_name || (match.stadium && match.stadium.country && match.stadium.country.name) || ''; // Get country from competition or stadium
+    // Prioritize stadium country, then competition country, otherwise empty string
+    const countryName = (match.stadium && match.stadium.country && match.stadium.country.name) || match.competition.country_name || '';
 
     let stageOrWeek = '';
-    if (match.competition_stage && match.competition_stage.name && match.competition_stage.name !== 'Regular Season') {
-        // For tournaments or specific stages
+    // Check if it's a specific competition stage (e.g., Final, Group Stage) and not just "Regular Season"
+    if (match.competition_stage && match.competition_stage.name && match.competition_stage.name !== 'Regular Season' && match.competition_stage.name !== 'Domestic Cup') {
         stageOrWeek = ` (${match.competition_stage.name})`;
     } else if (match.match_week) {
-        // For leagues
+        // For leagues, include match week
         stageOrWeek = ` Week ${match.match_week}`;
     }
 
@@ -25,7 +26,8 @@ function getQuestionDetails(match) {
 
 // --- Question Type 1: Match Outcome Question ---
 async function generateMatchOutcomeQuestion(matchesCollection, sampleMatches) {
-    const questionMatch = sampleMatches[0]; // Use the first sampled match as the question basis
+    // We can assume sampleMatches[0] is valid due to the initial length check in handler
+    const questionMatch = sampleMatches[0];
     const details = getQuestionDetails(questionMatch);
 
     const questionText = `Who won the match between ${questionMatch.home_team.home_team_name} vs ${questionMatch.away_team.away_team_name} ${details}?`;
@@ -39,44 +41,16 @@ async function generateMatchOutcomeQuestion(matchesCollection, sampleMatches) {
         correctAnswer = "It was a draw";
     }
 
-    // --- Generate incorrect options from the sampleMatches pool ---
-    const incorrectOptionsSet = new Set();
-    const optionsToFind = 2;
+    // --- Options for "Who Won?" question are fixed: Home Team, Away Team, Draw ---
+    const potentialOptions = new Set();
+    potentialOptions.add(questionMatch.home_team.home_team_name);
+    potentialOptions.add(questionMatch.away_team.away_team_name);
+    potentialOptions.add("It was a draw");
 
-    const allSampleTeamNames = new Set();
-    sampleMatches.forEach(match => {
-        allSampleTeamNames.add(match.home_team.home_team_name);
-        allSampleTeamNames.add(match.away_team.away_team_name);
-    });
+    // Convert Set to Array to ensure uniqueness and then shuffle
+    const allOptions = Array.from(potentialOptions);
 
-    const usedOptions = new Set([correctAnswer, questionMatch.home_team.home_team_name, questionMatch.away_team.away_team_name]);
-
-    const possibleIncorrectTeams = Array.from(allSampleTeamNames).filter(
-        team => !usedOptions.has(team)
-    );
-
-    // Shuffle possible incorrect teams
-    for (let i = possibleIncorrectTeams.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [possibleIncorrectTeams[i], possibleIncorrectTeams[j]] = [possibleIncorrectTeams[j], possibleIncorrectTeams[i]];
-    }
-
-    for (let i = 0; i < optionsToFind && i < possibleIncorrectTeams.length; i++) {
-        incorrectOptionsSet.add(possibleIncorrectTeams[i]);
-    }
-
-    if (correctAnswer !== "It was a draw" && incorrectOptionsSet.size < optionsToFind) {
-        incorrectOptionsSet.add("It was a draw");
-    }
-
-    while (incorrectOptionsSet.size < optionsToFind) {
-        incorrectOptionsSet.add(`Other Team ${incorrectOptionsSet.size + 1}`);
-    }
-
-    const finalIncorrectOptions = Array.from(incorrectOptionsSet).slice(0, optionsToFind);
-
-    // Combine all options and shuffle them
-    const allOptions = [correctAnswer, ...finalIncorrectOptions].filter(Boolean);
+    // Shuffle the options to randomize their order
     for (let i = allOptions.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [allOptions[i], allOptions[j]] = [allOptions[j], allOptions[i]];
@@ -100,26 +74,37 @@ async function generateScoreQuestion(matchesCollection, sampleMatches) {
     const correctAnswer = `${questionMatch.home_score} - ${questionMatch.away_score}`;
 
     const incorrectOptions = new Set();
-    const commonScores = ["0 - 0", "1 - 0", "1 - 1", "2 - 0", "2 - 1", "3 - 0"];
+    const optionsToFind = 2; // We need two incorrect options
+    const commonScores = ["0 - 0", "1 - 0", "1 - 1", "2 - 0", "2 - 1", "3 - 0", "0 - 1", "0 - 2", "1 - 2"];
 
     // Try to generate variations of the correct score
     const [home, away] = [questionMatch.home_score, questionMatch.away_score];
-    if (`${home + 1} - ${away}` !== correctAnswer) incorrectOptions.add(`${home + 1} - ${away}`);
-    if (`${home} - ${away + 1}` !== correctAnswer) incorrectOptions.add(`${home} - ${away + 1}`);
-    if (`${home - 1} - ${away}` !== correctAnswer && home - 1 >= 0) incorrectOptions.add(`${home - 1} - ${away}`);
-    if (`${home} - ${away - 1}` !== correctAnswer && away - 1 >= 0) incorrectOptions.add(`${home} - ${away - 1}`);
 
-    // Add random common scores if needed
+    // Variations around correct score
+    const scoreVariations = [
+        `${home + 1} - ${away}`, `${home} - ${away + 1}`,
+        `${Math.max(0, home - 1)} - ${away}`, `${home} - ${Math.max(0, away - 1)}`,
+        `${home + 1} - ${away + 1}`, `${Math.max(0, home - 1)} - ${Math.max(0, away - 1)}`
+    ];
+
+    for (const variation of scoreVariations) {
+        if (incorrectOptions.size >= optionsToFind) break;
+        if (variation !== correctAnswer) {
+            incorrectOptions.add(variation);
+        }
+    }
+
+    // Add random common scores if still needed
     let commonScoresShuffled = [...commonScores].sort(() => 0.5 - Math.random());
     for (const score of commonScoresShuffled) {
-        if (incorrectOptions.size >= 2) break;
+        if (incorrectOptions.size >= optionsToFind) break;
         if (score !== correctAnswer) {
             incorrectOptions.add(score);
         }
     }
 
-    while (incorrectOptions.size < 2) {
-        // Fallback: Generate completely random scores if still not enough
+    // Fallback: Generate completely random scores if still not enough (should be rare)
+    while (incorrectOptions.size < optionsToFind) {
         const randHome = Math.floor(Math.random() * 4); // 0-3 goals
         const randAway = Math.floor(Math.random() * 4);
         const randomScore = `${randHome} - ${randAway}`;
@@ -128,7 +113,80 @@ async function generateScoreQuestion(matchesCollection, sampleMatches) {
         }
     }
 
-    const finalIncorrectOptions = Array.from(incorrectOptions).slice(0, 2);
+    const finalIncorrectOptions = Array.from(incorrectOptions).slice(0, optionsToFind); // Ensure exactly 2
+
+    const allOptions = [correctAnswer, ...finalIncorrectOptions].filter(Boolean);
+    for (let i = allOptions.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [allOptions[i], allOptions[j]] = [allOptions[j], allOptions[i]];
+    }
+
+    return {
+        id: questionMatch.match_id,
+        question: questionText,
+        options: allOptions,
+        correctAnswer: correctAnswer
+    };
+}
+
+
+// --- Question Type 3: Goal Scorer Question ---
+async function generateGoalScorerQuestion(matchesCollection, eventsCollection, sampleMatches) {
+    const questionMatch = sampleMatches[0];
+    const details = getQuestionDetails(questionMatch);
+
+    // Fetch events for this specific match to find goal scorers
+    // Sort by minute and second to ensure "first goal" is accurate
+    const matchEvents = await eventsCollection.find({ match_id: questionMatch.match_id }).sort({ minute: 1, second: 1 }).toArray();
+
+    const goals = matchEvents.filter(event => event.type.name === "Goal" && event.player && event.player.name);
+
+    // If no goals found in events for this match, or not enough data, fall back
+    if (goals.length === 0 || !goals[0].player || !goals[0].player.name) {
+        console.warn(`No valid goal events found for match_id: ${questionMatch.match_id}. Falling back to Match Outcome question.`);
+        return generateMatchOutcomeQuestion(matchesCollection, sampleMatches); // Fallback
+    }
+
+    const correctAnswer = goals[0].player.name; // The first goal scorer
+
+    const questionText = `Who scored the first goal in the match between ${questionMatch.home_team.home_team_name} and ${questionMatch.away_team.away_team_name} ${details}?`;
+
+    const incorrectOptionsSet = new Set();
+    const optionsToFind = 2;
+
+    // Get all unique players who played in the match (from Starting XI events)
+    const playersInMatch = new Set();
+    const startingXIEvents = matchEvents.filter(event => event.type.name === "Starting XI");
+    startingXIEvents.forEach(event => {
+        if (event.tactics && event.tactics.lineup) {
+            event.tactics.lineup.forEach(playerData => {
+                playersInMatch.add(playerData.player.name);
+            });
+        }
+    });
+
+    // Add other players from the same match (who didn't score first, or didn't score at all)
+    const possibleIncorrectPlayers = Array.from(playersInMatch).filter(
+        player => player !== correctAnswer
+    );
+
+    // Shuffle possible incorrect players
+    for (let i = possibleIncorrectPlayers.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [possibleIncorrectPlayers[i], possibleIncorrectPlayers[j]] = [possibleIncorrectPlayers[j], possibleIncorrectPlayers[i]];
+    }
+
+    for (let i = 0; i < optionsToFind && i < possibleIncorrectPlayers.length; i++) {
+        incorrectOptionsSet.add(possibleIncorrectPlayers[i]);
+    }
+
+    // Fallback: If not enough unique players from the current match, use generic placeholders.
+    // We avoid pulling team names here as they are not relevant player options.
+    while (incorrectOptionsSet.size < optionsToFind) {
+         incorrectOptionsSet.add(`Random Player ${incorrectOptionsSet.size + 1}`);
+    }
+
+    const finalIncorrectOptions = Array.from(incorrectOptionsSet).slice(0, optionsToFind);
 
     const allOptions = [correctAnswer, ...finalIncorrectOptions].filter(Boolean);
     for (let i = allOptions.length - 1; i > 0; i--) {
@@ -147,6 +205,7 @@ async function generateScoreQuestion(matchesCollection, sampleMatches) {
 
 // --- Main Handler ---
 exports.handler = async function(event, context) {
+    // Ensure only GET requests are allowed for fetching questions (standard practice)
     if (event.httpMethod !== 'GET') {
         return {
             statusCode: 405,
@@ -158,15 +217,17 @@ exports.handler = async function(event, context) {
 
     try {
         await client.connect();
-        const database = client.db("wtfootball-trivia-game");
+        const database = client.db("wtfootball-trivia-game"); // Replace with your database name if different
         const matchesCollection = database.collection("matches_data");
-        // const eventsCollection = database.collection("events_data"); // Will be used later
+        const eventsCollection = database.collection("events_data"); // Ensure this matches your collection name!
 
+        // --- Fetch 10 random matches to get a pool for questions and incorrect answers ---
         const sampleMatches = await matchesCollection.aggregate([
             { $sample: { size: 10 } }
         ]).toArray();
 
-        if (sampleMatches.length < 4) {
+        // Ensure we have enough matches to create a question and options
+        if (sampleMatches.length < 4) { // Need at least 1 for question + 3 for options (one correct, two incorrect)
             return {
                 statusCode: 500,
                 body: JSON.stringify({ message: "Not enough unique match data in the database to generate a question. Need at least 4 matches." })
@@ -174,7 +235,8 @@ exports.handler = async function(event, context) {
         }
 
         // Randomly select question type
-        const questionTypes = ['matchOutcome', 'score']; // Add more types here as they are implemented
+        // Add more types here as they are implemented (e.g., 'coach', 'ownGoal', 'opponent')
+        const questionTypes = ['matchOutcome', 'score', 'goalScorer'];
         const selectedType = questionTypes[Math.floor(Math.random() * questionTypes.length)];
 
         let triviaQuestion;
@@ -185,11 +247,18 @@ exports.handler = async function(event, context) {
             case 'score':
                 triviaQuestion = await generateScoreQuestion(matchesCollection, sampleMatches);
                 break;
-            // case 'goalScorer': // Will be implemented next
-            //     triviaQuestion = await generateGoalScorerQuestion(matchesCollection, eventsCollection, sampleMatches);
-            //     break;
+            case 'goalScorer':
+                triviaQuestion = await generateGoalScorerQuestion(matchesCollection, eventsCollection, sampleMatches);
+                break;
             default:
-                triviaQuestion = await generateMatchOutcomeQuestion(matchesCollection, sampleMatches); // Default fallback
+                // Fallback to a reliable question type if something goes wrong with selection
+                triviaQuestion = await generateMatchOutcomeQuestion(matchesCollection, sampleMatches);
+        }
+
+        // Handle potential fallbacks from question generation functions (e.g., if goalScorer couldn't find data)
+        if (!triviaQuestion || !triviaQuestion.question || !triviaQuestion.options || !triviaQuestion.correctAnswer) {
+             console.warn("Generated question was invalid, falling back to Match Outcome question.");
+             triviaQuestion = await generateMatchOutcomeQuestion(matchesCollection, sampleMatches);
         }
 
 
@@ -198,7 +267,7 @@ exports.handler = async function(event, context) {
             headers: {
                 "Content-Type": "application/json",
             },
-            body: JSON.stringify([triviaQuestion])
+            body: JSON.stringify([triviaQuestion]) // Send an array containing one question object
         };
 
     } catch (error) {
